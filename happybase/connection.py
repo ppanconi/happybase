@@ -15,6 +15,7 @@ from Hbase_thrift import Hbase, ColumnDescriptor
 
 from .table import Table
 from .util import ensure_bytes, pep8_to_camel_case
+from thriftpy.tornado import TTornadoStreamTransport
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ COMPAT_MODES = ('0.90', '0.92', '0.94', '0.96')
 THRIFT_TRANSPORTS = dict(
     buffered=TBufferedTransport,
     framed=TFramedTransport,
+    tornado=TTornadoStreamTransport
 )
 THRIFT_PROTOCOLS = dict(
     binary=TBinaryProtocol,
