@@ -18,7 +18,8 @@ from .util import ensure_bytes, pep8_to_camel_case
 
 from happybase.connection import Connection, DEFAULT_HOST, DEFAULT_PORT, \
     DEFAULT_COMPAT, DEFAULT_TRANSPORT, DEFAULT_PROTOCOL
-from thriftpy.tornado import make_client
+from thriftpy.tornado import make_client, TTornadoStreamTransport
+from tornado import ioloop
 
 logger = logging.getLogger(__name__)
 
@@ -98,17 +99,24 @@ class TornadoConnection(Connection):
                  table_prefix=None,
                  table_prefix_separator=b'_', compat=DEFAULT_COMPAT,
 #                  transport=DEFAULT_TRANSPORT,
-                 protocol=DEFAULT_PROTOCOL):
+                 protocol=DEFAULT_PROTOCOL,
+                 io_loop=None):
 
         super(TornadoConnection, self).__init__(host, port, timeout,
                                                 False, table_prefix, table_prefix_separator,
                                                 compat, TORNADO_TRANSPORT, protocol)
+        self.io_loop = io_loop or ioloop.IOLoop.current()
 
 
     def _refresh_thrift_client(self):
         """Refresh the Thrift tornado client"""
 
-        make_client(service, host, port, proto_factory, io_loop, ssl_options, connect_timeout, read_timeout)
+        self.transport = TTornadoStreamTransport(self.host,
+                                                 self.port,
+                                                 io_loop=self.io_loop,
+                                                 ssl_options=ssl_options,
+                                                 read_timeout=read_timeout)
+
 
         socket = TSocket(self.host, self.port)
         if self.timeout is not None:
