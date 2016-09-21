@@ -4,26 +4,32 @@
 HappyBase tornado connection module.
 """
 
+from datetime import timedelta
 import logging
 
 import six
-from thriftpy.thrift import TClient
-from thriftpy.transport import TBufferedTransport, TFramedTransport, TSocket
 from thriftpy.protocol import TBinaryProtocol, TCompactProtocol
+from thriftpy.thrift import TClient
+from thriftpy.tornado import TTornadoStreamTransport, TTornadoClient
+from thriftpy.transport import TBufferedTransport, TFramedTransport, TSocket
+from thriftpy.transport.memory import TMemoryBuffer
 
 from Hbase_thrift import Hbase, ColumnDescriptor
+from happybase.connection import Connection, DEFAULT_HOST, DEFAULT_PORT, \
+    DEFAULT_COMPAT, DEFAULT_TRANSPORT, DEFAULT_PROTOCOL
 
 from .table import Table
 from .util import ensure_bytes, pep8_to_camel_case
+from thriftpy.transport.memory.cymemory import TCyMemoryBuffer
+from thriftpy._compat import CYTHON
+from thriftpy.protocol.binary import TBinaryProtocolFactory
+from happybase.tornado_table import TornadoTable
 
-from happybase.connection import Connection, DEFAULT_HOST, DEFAULT_PORT, \
-    DEFAULT_COMPAT, DEFAULT_TRANSPORT, DEFAULT_PROTOCOL
-from thriftpy.tornado import make_client, TTornadoStreamTransport
-from tornado import ioloop
 
 logger = logging.getLogger(__name__)
 
 TORNADO_TRANSPORT = 'tornado'
+TORNADO_PROTOCOL = 'binary'
 
 
 class TornadoConnection(Connection):
@@ -94,63 +100,60 @@ class TornadoConnection(Connection):
     :param str compat: Compatibility mode (optional)
     :param str transport: Thrift transport mode (optional)
     """
-    def __init__(self, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=None,
+    def __init__(self, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=None, #TODO check read or connect timeout
 #                  autoconnect=True,
                  table_prefix=None,
                  table_prefix_separator=b'_', compat=DEFAULT_COMPAT,
 #                  transport=DEFAULT_TRANSPORT,
-                 protocol=DEFAULT_PROTOCOL,
-                 io_loop=None):
+#                  protocol=DEFAULT_PROTOCOL,
+                 io_loop=None,
+                 ssl_options=None):
+        
+        self.io_loop = io_loop
+        self.ssl_options = ssl_options
+        
+        # TODO split this options ??
+        self.read_timeout = timeout
+        self.connect_timeout = timeout
 
         super(TornadoConnection, self).__init__(host, port, timeout,
                                                 False, table_prefix, table_prefix_separator,
-                                                compat, TORNADO_TRANSPORT, protocol)
-        self.io_loop = io_loop or ioloop.IOLoop.current()
-
+                                                compat, TORNADO_TRANSPORT, TORNADO_PROTOCOL)
+        
 
     def _refresh_thrift_client(self):
         """Refresh the Thrift tornado client"""
-
+        
         self.transport = TTornadoStreamTransport(self.host,
                                                  self.port,
                                                  io_loop=self.io_loop,
-                                                 ssl_options=ssl_options,
-                                                 read_timeout=read_timeout)
-
-
-        socket = TSocket(self.host, self.port)
-        if self.timeout is not None:
-            socket.set_timeout(self.timeout)
-
-        self.transport = self._transport_class(socket)
-        protocol = self._protocol_class(self.transport, decode_response=False)
-        self.client = TClient(Hbase, protocol)
-
-    def _table_name(self, name):
-        """Construct a table name by optionally adding a table name prefix."""
-        name = ensure_bytes(name)
-        if self.table_prefix is None:
-            return name
-        return self.table_prefix + self.table_prefix_separator + name
-
+                                                 ssl_options=self.ssl_options,
+                                                 read_timeout=self.read_timeout or timedelta(seconds=1)) 
+        
+        # TODO review this option
+        iprot = TBinaryProtocolFactory().get_protocol(TMemoryBuffer())
+        oprot = TBinaryProtocolFactory().get_protocol(self.transport) # TODO think if split this option  
+        self.client = TTornadoClient(Hbase, iprot, oprot)
+    
     def open(self):
-        """Open the underlying transport to the HBase instance.
+        """ASYNCHRONOUS Open the underlying transport to the HBase instance.
 
-        This method opens the underlying Thrift transport (TCP connection).
+        This method opens the tornado IOStream transport (TCP connection).
         """
-        if self.transport.is_open():
-            return
+        # NOT SUPPORTED 
+        # if self.transport.is_open():
+        # return 
 
         logger.debug("Opening Thrift transport to %s:%d", self.host, self.port)
-        self.transport.open()
+        return self.transport.open(timeout=self.connect_timeout or timedelta(seconds=1))
 
     def close(self):
         """Close the underyling transport to the HBase instance.
 
         This method closes the underlying Thrift transport (TCP connection).
         """
-        if not self.transport.is_open():
-            return
+#         if not self.transport.is_open():
+#             return
 
         if logger is not None:
             # If called from __del__(), module variables may no longer
@@ -193,7 +196,7 @@ class TornadoConnection(Connection):
         name = ensure_bytes(name)
         if use_prefix:
             name = self._table_name(name)
-        return Table(name, self)
+        return TornadoTable(name, self)
 
     #
     # Table administration and maintenance
